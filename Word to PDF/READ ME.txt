@@ -1,0 +1,7 @@
+One dependency to install if not already present:
+
+pip install pdf2image pillow
+And Poppler needs to be on your PATH for the previews to render:
+
+Download from github.com/oschwartz10612/poppler-windows/releases, extract, and add the bin/ folder to your system PATH.
+The converter still works fully without Poppler — it will just show a "preview unavailable" notice and let you confirm anyway.
