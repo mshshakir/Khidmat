@@ -40,6 +40,8 @@ from email.message import EmailMessage
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 import imaplib
+from datetime import date
+import uuid
 
 # ─────────────────────────── EMAIL CONFIG ──────────────────────────────────
 SMTP_HOST     = "smtp.gmail.com"
@@ -318,6 +320,11 @@ def send_pdf_by_email(pdf_path: Path, original_docx_name: str,
     msg["Subject"] = f"Converted PDF: {pdf_path.name}"
     msg["From"]    = EMAIL_FROM
     msg["To"]      = EMAIL_TO
+    unique_id = f"<{uuid.uuid4()}@word-to-pdf-converter>"
+    msg["Message-ID"] = unique_id
+    # Then pass it to the delete function:
+    if delete_sent:
+        _delete_from_sent(message_id=unique_id)
     msg.set_content(
         f"Hi,\n\n"
         f"Please find attached the converted PDF for:\n"
@@ -340,10 +347,10 @@ def send_pdf_by_email(pdf_path: Path, original_docx_name: str,
     log.info("  Email sent successfully.")
 
     if delete_sent:
-        _delete_from_sent(subject=f"Converted PDF: {pdf_path.name}")
+        _delete_from_sent(message_id=unique_id)
 
 
-def _delete_from_sent(subject: str) -> None:
+def _delete_from_sent(message_id: str) -> None:
     SENT_FOLDER_CANDIDATES = [
         '"[Gmail]/Sent Mail"', "Sent", "Sent Items", "INBOX.Sent",
     ]
@@ -367,7 +374,8 @@ def _delete_from_sent(subject: str) -> None:
             mail.logout()
             return
 
-        result, data = mail.search(None, f'SUBJECT "{subject}"')
+        # Search by unique Message-ID instead of subject or date
+        result, data = mail.search(None, f'HEADER Message-ID "{message_id}"')
         if result != "OK" or not data[0]:
             log.warning("  Sent message not found — skipping delete.")
             mail.logout()
