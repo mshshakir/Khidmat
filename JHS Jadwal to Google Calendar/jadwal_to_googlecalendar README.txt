@@ -31,7 +31,6 @@ Follow these steps to get the automation running:
 1.  Open a new or existing Google Sheet.
 2.  In the **first tab** (the leftmost one), type or paste your schedule URL into **Cell B1**. 
     * *Example: `https://example.com/daily-schedule`*
-3.  (Optional) Create a second tab named **Jadwal**, or let the script create it for you automatically.
 
 ### **Step 2: Install the Script**
 1.  In your Google Sheet, go to **Extensions** > **Apps Script**.
