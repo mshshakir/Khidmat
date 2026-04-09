@@ -3,14 +3,10 @@
  * CONFIGURATION
  * ------------------------------------------------------------------
  */
-const TIMEZONE = "Asia/Kolkata"; // Set to Mumbai/India Standard Time
+const TIMEZONE = "Asia/Kolkata"; 
 
-/**
- * 1. SETUP & TRIGGER MANAGEMENT
- */
 function initializeJadwalTriggers() {
   stopAllAutomation();
-
   ScriptApp.newTrigger("dailyKickoff")
     .timeBased()
     .everyDays(1)
@@ -18,14 +14,12 @@ function initializeJadwalTriggers() {
     .nearMinute(0) 
     .inTimezone(TIMEZONE) 
     .create();
-    
-  console.log(`Daily trigger set for 8 AM (${TIMEZONE}). Automation started.`);
+  console.log(`Daily trigger set for 8 AM (${TIMEZONE}).`);
 }
 
 function stopAllAutomation() {
   const triggers = ScriptApp.getProjectTriggers();
   triggers.forEach(t => ScriptApp.deleteTrigger(t));
-  console.log("All triggers deleted. Automation stopped.");
 }
 
 function dailyKickoff() {
@@ -34,152 +28,104 @@ function dailyKickoff() {
 
 function processAndScheduleNext() {
   const now = new Date();
-  // Get current hour in Mumbai time
   const currentHour = parseInt(Utilities.formatDate(now, TIMEZONE, "H"));
-
-  // SAFETY CHECK: Only run between 8:00 and 16:00 Mumbai Time
-  if (currentHour >= 16) {
-    console.log("Past 4 PM Mumbai time. Stopping loop for today.");
-    return;
-  }
-
-  try {
-    syncJadwalDaily();
-    console.log(`Synced at ${Utilities.formatDate(now, TIMEZONE, "HH:mm:ss")}`);
-  } catch (e) {
-    console.error("Error in syncJadwalDaily:", e);
-  }
-
-  const intervalMinutes = 35;
-  const nextRunMs = intervalMinutes * 60 * 1000; 
-  const nextRunTime = new Date(now.getTime() + nextRunMs);
-  const nextRunHour = parseInt(Utilities.formatDate(nextRunTime, TIMEZONE, "H"));
-
-  if (nextRunHour >= 16) {
-    console.log("Next run would be past 4 PM Mumbai time. Loop finished.");
-  } else {
-    ScriptApp.newTrigger("processAndScheduleNext")
-      .timeBased()
-      .after(nextRunMs)
-      .create();
-    console.log(`Next run scheduled for approx ${Utilities.formatDate(nextRunTime, TIMEZONE, "HH:mm")}`);
-  }
+  if (currentHour >= 18) return;
+  try { syncJadwalDaily(); } catch (e) { console.error("Error:", e); }
+  ScriptApp.newTrigger("processAndScheduleNext").timeBased().after(35 * 60 * 1000).create();
 }
 
-/**
- * 2. MAIN SYNC LOGIC
- */
 function syncJadwalDaily() {
   const ss = SpreadsheetApp.getActive();
   const SHEET_NAME = "Jadwal";
   const calendar = CalendarApp.getDefaultCalendar();
-
   const setupSheet = ss.getSheets()[0]; 
   const JADWAL_URL = setupSheet.getRange("B1").getValue();
 
-  if (!JADWAL_URL || typeof JADWAL_URL !== 'string' || !JADWAL_URL.includes("http")) {
-    console.error("❌ Error: No valid URL found in Cell B1.");
-    return;
-  }
+  if (!JADWAL_URL || !JADWAL_URL.includes("http")) return;
 
+  const html = UrlFetchApp.fetch(JADWAL_URL, { muteHttpExceptions: true }).getContentText();
   const today = new Date();
-  const dateStr = Utilities.formatDate(today, TIMEZONE, "yyyy-MM-dd");
+  const tomorrow = new Date();
+  tomorrow.setDate(today.getDate() + 1);
 
-  let html;
-  try {
-    html = UrlFetchApp.fetch(JADWAL_URL, { muteHttpExceptions: true }).getContentText();
-  } catch (e) {
-    console.error("❌ Error fetching URL: " + e.message);
-    return;
-  }
+  const dateTodayStr = Utilities.formatDate(today, TIMEZONE, "yyyy-MM-dd");
+  const dateTomorrowStr = Utilities.formatDate(tomorrow, TIMEZONE, "yyyy-MM-dd");
 
-  const tableMatch = html.match(/<table[\s\S]*?<\/table>/i);
-  if (!tableMatch) return;
+  const todayTable = getTableById(html, "gvTodaysPeriods");
+  const tomorrowTable = getTableById(html, "gvNextPeriods");
 
-  const rowsHtml = tableMatch[0].match(/<tr[\s\S]*?<\/tr>/gi);
-  if (!rowsHtml) return;
-
-  let sheet = ss.getSheetByName(SHEET_NAME);
-  if (!sheet) {
-    sheet = ss.insertSheet(SHEET_NAME);
+  let sheet = ss.getSheetByName(SHEET_NAME) || ss.insertSheet(SHEET_NAME);
+  if (sheet.getLastRow() === 0) {
     sheet.appendRow(["Date", "Period", "Darajah", "Subject", "Start Time", "End Time", "Type", "Status", "EventKey"]);
+    sheet.getRange("I:I").setNumberFormat("@"); // Force Column I to be Plain Text
   }
 
-  const data = sheet.getDataRange().getValues().slice(1);
-  const sheetMap = {}; 
-  data.forEach(r => { if (r[8]) sheetMap[r[8]] = true; });
-
+  const lastRow = sheet.getLastRow();
+  const existingKeys = lastRow > 1 
+    ? sheet.getRange(2, 9, lastRow - 1, 1).getValues().flat().map(k => String(k).trim()) 
+    : [];
+  
   const rowsToWrite = [];
 
-  for (let i = 1; i < rowsHtml.length; i++) {
-    const cols = [];
-    const colRegex = /<td[\s\S]*?>([\s\S]*?)<\/td>/gi;
-    let m;
-    while ((m = colRegex.exec(rowsHtml[i])) !== null) {
-      cols.push(m[1].replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim());
-    }
-
-    if (cols.length < 5) continue;
-
-    const [period, darajah, subject, time, type] = cols;
-    const status = cols.length > 5 ? cols[5] : ""; 
-
-    if (!time.includes("-")) continue;
-
-    const [startTime, endTime] = time.split("-").map(t => t.trim());
-    const eventKey = `${dateStr}|${period}|${subject}|${startTime}`;
-
-    // Convert parsed time to Mumbai-localized Date objects
-    const startDate = parseTimeForZone(dateStr, startTime, TIMEZONE);
-    const endDate = parseTimeForZone(dateStr, endTime, TIMEZONE);
-    const title = `${subject} (${darajah})`;
-
-    const events = calendar.getEvents(startDate, endDate);
-    let calendarEvent = null;
-
-    for (let e = 0; e < events.length; e++) {
-      if (events[e].getTag("eventKey") === eventKey) {
-        calendarEvent = events[e];
-        break;
-      }
-    }
-
-    // Cancellation logic
-    if (status.toLowerCase().includes("cancel")) {
-      if (calendarEvent) {
-        calendarEvent.deleteEvent();
-        console.log(`Deleted: ${title}`);
-      }
-      continue; 
-    }
-
-    // Event creation logic
-    if (!calendarEvent) {
-      const ev = calendar.createEvent(
-        title,
-        startDate,
-        endDate,
-        { description: `Period ${period}\nType: ${type}\nStatus: ${status}` }
-      );
-      ev.setTag("eventKey", eventKey);
-
-      if (!sheetMap[eventKey]) {
-        rowsToWrite.push([dateStr, period, darajah, subject, startTime, endTime, type, status, eventKey]);
-      }
-    }
-  }
+  if (todayTable) processTableRows(todayTable, dateTodayStr, calendar, existingKeys, rowsToWrite);
+  if (tomorrowTable) processTableRows(tomorrowTable, dateTomorrowStr, calendar, existingKeys, rowsToWrite);
 
   if (rowsToWrite.length > 0) {
     sheet.getRange(sheet.getLastRow() + 1, 1, rowsToWrite.length, rowsToWrite[0].length).setValues(rowsToWrite);
+    console.log(`Added ${rowsToWrite.length} rows.`);
   }
 }
 
-/**
- * Correctly parses a date and time string into a Date object for a specific timezone.
- */
-function parseTimeForZone(dateStr, timeStr, tz) {
-  // dateStr is "yyyy-MM-dd", timeStr is "HH:mm"
-  // Constructing a string format that Utilities.parseDate understands
-  const dateTimeStr = `${dateStr} ${timeStr}`;
-  return Utilities.parseDate(dateTimeStr, tz, "yyyy-MM-dd HH:mm");
+function processTableRows(tableHtml, dateStr, calendar, existingKeys, rowsToWrite) {
+  const rowRegex = /<tr[\s\S]*?>([\s\S]*?)<\/tr>/gi;
+  let rowMatch;
+  let isHeader = true;
+
+  while ((rowMatch = rowRegex.exec(tableHtml)) !== null) {
+    if (isHeader) { isHeader = false; continue; }
+
+    const colRegex = /<td[\s\S]*?>([\s\S]*?)<\/td>/gi;
+    let colMatch;
+    const cols = [];
+    while ((colMatch = colRegex.exec(rowMatch[1])) !== null) {
+      cols.push(colMatch[1].replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim());
+    }
+
+    if (cols.length < 5) continue;
+    const [period, darajah, subject, time, type] = cols;
+    const status = cols[5] || "";
+    if (!time.includes("-")) continue;
+
+    const [startT, endT] = time.split("-").map(t => t.trim());
+    
+    // THE KEY: Date + Period + Subject (first 15 chars) + Time
+    const eventKey = `${dateStr}|${period}|${subject.substring(0, 15)}|${startT}`;
+    
+    // SHEET UPDATE
+    if (!existingKeys.includes(eventKey)) {
+      rowsToWrite.push([dateStr, period, darajah, subject, startT, endT, type, status, eventKey]);
+      existingKeys.push(eventKey);
+    }
+
+    // CALENDAR UPDATE
+    const startDate = Utilities.parseDate(`${dateStr} ${startT}`, TIMEZONE, "yyyy-MM-dd HH:mm");
+    const endDate = Utilities.parseDate(`${dateStr} ${endT}`, TIMEZONE, "yyyy-MM-dd HH:mm");
+    const events = calendar.getEvents(startDate, endDate);
+    let calendarEvent = events.find(e => e.getTag("eventKey") === eventKey);
+
+    if (status.toLowerCase().includes("cancel")) {
+      if (calendarEvent) calendarEvent.deleteEvent();
+    } else if (!calendarEvent) {
+      const ev = calendar.createEvent(`${subject} (${darajah})`, startDate, endDate, {
+        description: `Period: ${period}\nType: ${type}\nStatus: ${status}`
+      });
+      ev.setTag("eventKey", eventKey);
+    }
+  }
+}
+
+function getTableById(html, id) {
+  const regex = new RegExp(`<table[^>]*id="${id}"[\\s\\S]*?<\\/table>`, "i");
+  const match = html.match(regex);
+  return match ? match[0] : null;
 }
