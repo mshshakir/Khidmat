@@ -56,9 +56,11 @@ function syncJadwalDaily() {
 
   const todayTable = getTableById(html, "gvTodaysPeriods");
   const tomorrowTable = getTableById(html, "gvNextPeriods");
-  
-  // Create a searchable version of the web data
-  const webHtmlCombined = (todayTable || "") + (tomorrowTable || "");
+
+  // 1. Get current keys from Web for comparison
+  let webKeys = [];
+  if (todayTable) webKeys = webKeys.concat(extractKeysFromTable(todayTable, dateTodayStr));
+  if (tomorrowTable) webKeys = webKeys.concat(extractKeysFromTable(tomorrowTable, dateTomorrowStr));
 
   let sheet = ss.getSheetByName(SHEET_NAME) || ss.insertSheet(SHEET_NAME);
   if (sheet.getLastRow() === 0) {
@@ -79,21 +81,18 @@ function syncJadwalDaily() {
       const rowDate = (rowDateRaw instanceof Date) ? Utilities.formatDate(rowDateRaw, TIMEZONE, "yyyy-MM-dd") : String(rowDateRaw);
       const rowKey = String(values[i][8]).trim();
       const currentStatus = String(values[i][7]);
-      const subjectName = String(values[i][3]);
 
-      // Only evaluate events for Today or Tomorrow
-      if (rowDate === dateTodayStr || rowDate === dateTomorrowStr) {
+      // Focus on Today/Tomorrow and ignore rows already marked Removed/Cancelled
+      if ((rowDate === dateTodayStr || rowDate === dateTomorrowStr) && 
+          !currentStatus.includes("REMOVED") && 
+          !currentStatus.includes("CANCEL")) {
         
-        // CHECK: Is this specific class (Subject + Period) still in the HTML?
-        // We use a broader check: Subject name + Period number
-        const periodNum = values[i][1];
-        const isStillOnWeb = webHtmlCombined.includes(subjectName.substring(0, 10)) && webHtmlCombined.includes(">" + periodNum + "<");
-
-        if (!isStillOnWeb && !currentStatus.includes("REMOVED") && !currentStatus.includes("CANCEL")) {
-           console.log(`Class detected as removed: ${subjectName} on ${rowDate}`);
+        // If the unique key in our sheet is MISSING from the web keys list
+        if (!webKeys.includes(rowKey)) {
+           console.log("Match not found on web. Deleting: " + rowKey);
            values[i][7] = "REMOVED FROM WEB"; 
            sheetUpdated = true;
-           deleteCalendarEventByKey(calendar, rowKey, rowDate, values[i][4]);
+           deleteCalendarEventByKey(calendar, rowKey, rowDate);
         }
       }
     }
@@ -115,7 +114,32 @@ function syncJadwalDaily() {
 }
 
 /**
- * HELPER: PROCESS WEB ROWS
+ * HELPER: EXTRACT ALL KEYS FROM WEB TABLES
+ */
+function extractKeysFromTable(tableHtml, dateStr) {
+  const keys = [];
+  const rowRegex = /<tr[\s\S]*?>([\s\S]*?)<\/tr>/gi;
+  let rowMatch;
+  let isHeader = true;
+  while ((rowMatch = rowRegex.exec(tableHtml)) !== null) {
+    if (isHeader) { isHeader = false; continue; }
+    const colRegex = /<td[\s\S]*?>([\s\S]*?)<\/td>/gi;
+    let colMatch;
+    const cols = [];
+    while ((colMatch = colRegex.exec(rowMatch[1])) !== null) {
+      cols.push(colMatch[1].replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim());
+    }
+    if (cols.length < 4) continue;
+    const [period, , subject, time] = cols;
+    if (!time.includes("-")) continue;
+    const startT = time.split("-")[0].trim();
+    keys.push(`${dateStr}|${period}|${subject.substring(0, 15)}|${startT}`);
+  }
+  return keys;
+}
+
+/**
+ * HELPER: PROCESS WEB ROWS (ADD/CANCEL)
  */
 function processTableRows(tableHtml, dateStr, calendar, existingKeys, rowsToWrite) {
   const rowRegex = /<tr[\s\S]*?>([\s\S]*?)<\/tr>/gi;
@@ -145,17 +169,13 @@ function processTableRows(tableHtml, dateStr, calendar, existingKeys, rowsToWrit
       existingKeys.push(eventKey);
     }
 
-    // Standard cancellation check
     const startDate = Utilities.parseDate(`${dateStr} ${startT}`, TIMEZONE, "yyyy-MM-dd HH:mm");
     const endDate = Utilities.parseDate(`${dateStr} ${endT}`, TIMEZONE, "yyyy-MM-dd HH:mm");
     const events = calendar.getEvents(startDate, endDate);
     let calendarEvent = events.find(e => e.getTag("eventKey") === eventKey);
 
     if (status.toLowerCase().includes("cancel")) {
-      if (calendarEvent) {
-        calendarEvent.deleteEvent();
-        console.log("Deleted cancelled event via status check.");
-      }
+      if (calendarEvent) calendarEvent.deleteEvent();
     } else if (!calendarEvent) {
       const ev = calendar.createEvent(`${subject} (${darajah})`, startDate, endDate, {
         description: `Period: ${period}\nType: ${type}\nStatus: ${status}`
@@ -166,10 +186,9 @@ function processTableRows(tableHtml, dateStr, calendar, existingKeys, rowsToWrit
 }
 
 /**
- * HELPER: DELETE BY KEY (With 24h search range to be safe)
+ * HELPER: DELETE BY KEY
  */
-function deleteCalendarEventByKey(calendar, key, dateStr, startT) {
-  // Search the whole day of the event
+function deleteCalendarEventByKey(calendar, key, dateStr) {
   const startOfDay = Utilities.parseDate(`${dateStr} 00:00`, TIMEZONE, "yyyy-MM-dd HH:mm");
   const endOfDay = Utilities.parseDate(`${dateStr} 23:59`, TIMEZONE, "yyyy-MM-dd HH:mm");
   
@@ -178,16 +197,14 @@ function deleteCalendarEventByKey(calendar, key, dateStr, startT) {
   
   if (ev) {
     ev.deleteEvent();
-    console.log("✅ Successfully deleted: " + key);
+    console.log("✅ Successfully deleted from Calendar: " + key);
   } else {
-    // Backup search: Look by Subject Name + Time if tag is missing
-    const shortKeyPart = key.split('|')[2]; // Gets the truncated subject
-    const fallbackEv = events.find(e => e.getTitle().includes(shortKeyPart));
+    // Fallback: search by partial title in case tag failed
+    const titlePart = key.split('|')[2];
+    const fallbackEv = events.find(e => e.getTitle().includes(titlePart));
     if (fallbackEv) {
       fallbackEv.deleteEvent();
-      console.log("✅ Successfully deleted via Fallback Title match.");
-    } else {
-      console.warn("❌ Could not find event to delete on " + dateStr);
+      console.log("✅ Deleted via Fallback match.");
     }
   }
 }
