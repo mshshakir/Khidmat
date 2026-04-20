@@ -34,7 +34,7 @@ Follow these steps to get the automation running:
 
 ### **Step 2: Install the Script**
 1.  In your Google Sheet, go to **Extensions** > **Apps Script**.
-2.  Delete any code in the editor and paste the entire code block you provided.
+2.  Delete any code in the editor and the enter "User code" .
 3.  Click the **Save** icon (floppy disk) and name it "Jadwal Sync."
 
 ### **Step 3: Authorize & Run**
