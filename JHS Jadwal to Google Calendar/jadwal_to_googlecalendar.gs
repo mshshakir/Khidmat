@@ -36,6 +36,7 @@ function processAndScheduleNext() {
 
 /**
  * MAIN SYNC FUNCTION
+ * Now includes a check to ensure the website's day matches the current date.
  */
 function syncJadwalDaily() {
   const ss = SpreadsheetApp.getActive();
@@ -47,17 +48,39 @@ function syncJadwalDaily() {
   if (!JADWAL_URL || !JADWAL_URL.includes("http")) return;
 
   const html = UrlFetchApp.fetch(JADWAL_URL, { muteHttpExceptions: true }).getContentText();
+  
+  // 1. Get Dates and Day Names for Current Time
   const today = new Date();
   const tomorrow = new Date();
   tomorrow.setDate(today.getDate() + 1);
 
   const dateTodayStr = Utilities.formatDate(today, TIMEZONE, "yyyy-MM-dd");
   const dateTomorrowStr = Utilities.formatDate(tomorrow, TIMEZONE, "yyyy-MM-dd");
+  
+  // Format current system days to "Monday", "Tuesday", etc.
+  const expectedDayToday = Utilities.formatDate(today, TIMEZONE, "EEEE");
+  const expectedDayTomorrow = Utilities.formatDate(tomorrow, TIMEZONE, "EEEE");
 
-  const todayTable = getTableById(html, "gvTodaysPeriods");
-  const tomorrowTable = getTableById(html, "gvNextPeriods");
+  // 2. Extract Day Names from HTML (litDayName and litNextDayName)
+  const webDayToday = getElementContentById(html, "litDayName");
+  const webDayTomorrow = getElementContentById(html, "litNextDayName");
 
-  // 1. Get current keys from Web for comparison
+  console.log(`System Today: ${expectedDayToday} | Web Today: ${webDayToday}`);
+  console.log(`System Tomorrow: ${expectedDayTomorrow} | Web Tomorrow: ${webDayTomorrow}`);
+
+  // 3. Validation Logic
+  const processToday = (webDayToday === expectedDayToday);
+  const processTomorrow = (webDayTomorrow === expectedDayTomorrow);
+
+  if (!processToday && !processTomorrow) {
+    console.warn("Website days do not match current dates. Skipping sync to prevent data mismatch.");
+    return;
+  }
+
+  const todayTable = processToday ? getTableById(html, "gvTodaysPeriods") : null;
+  const tomorrowTable = processTomorrow ? getTableById(html, "gvNextPeriods") : null;
+
+  // --- PART 1: SCAN SHEET FOR REMOVALS ---
   let webKeys = [];
   if (todayTable) webKeys = webKeys.concat(extractKeysFromTable(todayTable, dateTodayStr));
   if (tomorrowTable) webKeys = webKeys.concat(extractKeysFromTable(tomorrowTable, dateTomorrowStr));
@@ -69,8 +92,6 @@ function syncJadwalDaily() {
   }
 
   const lastRow = sheet.getLastRow();
-
-  // --- PART 1: SCAN SHEET FOR REMOVALS ---
   if (lastRow > 1) {
     const range = sheet.getRange(2, 1, lastRow - 1, 9);
     const values = range.getValues();
@@ -82,14 +103,12 @@ function syncJadwalDaily() {
       const rowKey = String(values[i][8]).trim();
       const currentStatus = String(values[i][7]);
 
-      // Focus on Today/Tomorrow and ignore rows already marked Removed/Cancelled
-      if ((rowDate === dateTodayStr || rowDate === dateTomorrowStr) && 
-          !currentStatus.includes("REMOVED") && 
-          !currentStatus.includes("CANCEL")) {
+      // Only check removals for the dates we verified as "current" from the web
+      if (((rowDate === dateTodayStr && processToday) || (rowDate === dateTomorrowStr && processTomorrow)) && 
+          !currentStatus.includes("REMOVED") && !currentStatus.includes("CANCEL")) {
         
-        // If the unique key in our sheet is MISSING from the web keys list
         if (!webKeys.includes(rowKey)) {
-           console.log("Match not found on web. Deleting: " + rowKey);
+           console.log("Match not found on web. Marking Removed: " + rowKey);
            values[i][7] = "REMOVED FROM WEB"; 
            sheetUpdated = true;
            deleteCalendarEventByKey(calendar, rowKey, rowDate);
@@ -99,7 +118,7 @@ function syncJadwalDaily() {
     if (sheetUpdated) range.setValues(values);
   }
 
-  // --- PART 2: ADD NEW ROWS & HANDLE WEB-MARKED CANCELLATIONS ---
+  // --- PART 2: ADD NEW ROWS & HANDLE CANCELLATIONS ---
   const existingKeys = lastRow > 1 
     ? sheet.getRange(2, 9, lastRow - 1, 1).getValues().flat().map(k => String(k).trim()) 
     : [];
@@ -112,6 +131,16 @@ function syncJadwalDaily() {
     sheet.getRange(sheet.getLastRow() + 1, 1, rowsToWrite.length, rowsToWrite[0].length).setValues(rowsToWrite);
   }
 }
+
+/**
+ * NEW HELPER: EXTRACT TEXT CONTENT BY ID (for Span elements)
+ */
+function getElementContentById(html, id) {
+  const regex = new RegExp(`<span[^>]*id="${id}"[^>]*>([\\s\\S]*?)<\\/span>`, "i");
+  const match = html.match(regex);
+  return match ? match[1].replace(/<[^>]+>/g, "").trim() : null;
+}
+
 
 /**
  * HELPER: EXTRACT ALL KEYS FROM WEB TABLES
