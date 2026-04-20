@@ -8,10 +8,19 @@ const CURRENT_VERSION = "1.1.0"; // Increment this when you release a fix
 const GITHUB_RAW_VERSION_URL = "https://raw.githubusercontent.com/mshshakir/Khidmat/refs/heads/main/JHS%20Jadwal%20to%20Google%20Calendar/version.txt";
 
 /**
- * INSTALLATION & TRIGGERS
+ * INSTALLATION & UI MENU
  */
 function onOpen() {
-  // Checks for updates every time the spreadsheet is opened
+  const ui = SpreadsheetApp.getUi();
+  
+  // This creates the custom menu in the Google Sheet UI
+  ui.createMenu('📅 Jadwal')
+    .addItem('Sync Now', 'syncJadwalDaily')
+    .addSeparator()
+    .addItem('Check for Updates', 'checkForUpdates')
+    .addToUi();
+
+  // Runs the update check automatically when the sheet is opened
   checkForUpdates();
 }
 
