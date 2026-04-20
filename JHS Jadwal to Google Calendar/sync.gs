@@ -4,7 +4,7 @@
  * ------------------------------------------------------------------
  */
 const TIMEZONE = "Asia/Kolkata"; 
-const CURRENT_VERSION = "1.1.0"; // Increment this when you release a fix
+const CURRENT_VERSION = "1.5.0"; // Increment this when you release a fix
 const GITHUB_RAW_VERSION_URL = "https://raw.githubusercontent.com/mshshakir/Khidmat/refs/heads/main/JHS%20Jadwal%20to%20Google%20Calendar/version.txt";
 
 /**
