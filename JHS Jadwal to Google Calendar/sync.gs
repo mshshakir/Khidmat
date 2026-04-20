@@ -257,14 +257,14 @@ function deleteCalendarEventByKey(calendar, key, dateStr) {
 }
 
 function checkForUpdates() {
-  try {
-    const response = UrlFetchApp.fetch(GITHUB_RAW_VERSION_URL);
-    const latestVersion = response.getContentText().trim();
-    if (latestVersion !== CURRENT_VERSION) {
-      const ui = SpreadsheetApp.getUi();
-      ui.alert("Update Available", `A new version (${latestVersion}) is available on GitHub. Please update your code to fix bugs.`, ui.ButtonSet.OK);
-    }
-  } catch (e) {
-    console.log("Update check skipped.");
+  const response = UrlFetchApp.fetch(GITHUB_RAW_VERSION_URL);
+  const latestVersion = response.getContentText().trim();
+  const ui = SpreadsheetApp.getUi();
+
+  if (latestVersion !== CURRENT_VERSION) {
+    ui.alert("Update Available", `A new version (${latestVersion}) is available on GitHub.`, ui.ButtonSet.OK);
+  } else {
+    // This part will show the "Up to Date" message
+    ui.alert("System Check", `Your script is up to date (Version ${CURRENT_VERSION}).`, ui.ButtonSet.OK);
   }
 }
