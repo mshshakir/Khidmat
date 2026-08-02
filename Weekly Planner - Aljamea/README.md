@@ -1,4 +1,4 @@
- # Jadwal Grid → Google Calendar
+ # Weekly Planner → Google Calendar
 
 A Google Sheet that keeps a dated weekly timetable, fills it with your Jadwal periods each morning, and turns every filled cell into an event on your Google Calendar.
 
