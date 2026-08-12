@@ -327,7 +327,17 @@ function periodScan_(days, exclusions, start, end, dateSystem) {
   var startAJD = resolveEndpoint_(start, system, "Start"),
       endAJD   = resolveEndpoint_(end,   system, "End");
 
-  if (startAJD > endAJD) { var t = startAJD; startAJD = endAJD; endAJD = t; }
+  if (startAJD > endAJD) {
+    var sh = ajdToHijri_(startAJD), eh = ajdToHijri_(endAJD), hint = "";
+    // Most common cause: an academic year that crosses the Hijri new year,
+    // written with the same year at both ends.
+    if (eh.getYear() === sh.getYear() && eh.getMonth() < sh.getMonth()) {
+      hint = " If your year runs across the Hijri new year, End should be " +
+             eh.getDate() + "/" + (eh.getMonth() + 1) + "/" + (eh.getYear() + 1) + ".";
+    }
+    throw new Error("PeriodCount: Start (" + formatHijri_(sh) + ") is after End (" +
+                    formatHijri_(eh) + ")." + hint);
+  }
 
   var span = Math.round(endAJD - startAJD) + 1;
   if (span > MAX_WINDOW_DAYS) {
@@ -362,6 +372,11 @@ function hijriToAJD_(year, month, day) {
 /** Real AJD -> Hijri date, undoing the global day adjustment. */
 function ajdToHijri_(ajd) {
   return HijriDate.fromAJD(ajd - HIJRI_DAY_ADJUSTMENT);
+}
+
+/** "1 Shawwal 1448" — used in error messages. */
+function formatHijri_(h) {
+  return h.getDate() + " " + HijriDate.getShortMonthName(h.getMonth()) + " " + h.getYear();
 }
 
 function isBlocked_(ajd, blocks) {
