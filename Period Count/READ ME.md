@@ -7,7 +7,11 @@ A Google Apps Script custom function that counts how many times given weekdays o
 *"Physics meets on Mon, Tue and Wed. How many periods is that this academic year, given that Ashara Mubaraka and 20 Rabi al-Aakhar are off?"*
 
 ```
-=PeriodCount("Mon,Tue,Wed", "[1/1-15/1,20/4]", "1/2/1447", "29/12/1447")
+=PeriodCount(schedule, hijriExclusions, gregorianExclusions, start, end, [buffer], [dateSystem])
+```
+
+```
+=PeriodCount("Mon,Tue,Wed", "[1/1-15/1,20/4]", "", "1/2/1447", "29/12/1447")
 ```
 
 → `138`
@@ -19,8 +23,10 @@ A Google Apps Script custom function that counts how many times given weekdays o
 - [Install](#install)
 - [Syntax](#syntax)
 - [Exclusion syntax](#exclusion-syntax)
+- [Double periods](#double-periods)
+- [Buffer](#buffer)
 - [Examples](#examples)
-- [Helper functions](#helper-functions)
+- [Helper functions](#helper-functions) — `PeriodCountGross`, `PeriodDayCount`, `PeriodDates`, `HijriToGregorian`, `GregorianToHijri`
 - [Configuration](#configuration)
 - [Accepted names](#accepted-names)
 - [The calendar](#the-calendar)
@@ -45,16 +51,50 @@ No libraries, no manifest changes, no permissions prompt. The script is self-con
 ## Syntax
 
 ```
-=PeriodCount(days, exclusions, start, end, [dateSystem])
+=PeriodCount(schedule, hijriExclusions, gregorianExclusions, start, end, [buffer], [dateSystem])
 ```
 
-| Argument | Required | Description |
-|---|---|---|
-| `days` | yes | Weekdays the subject has periods on, e.g. `"Mon,Tue,Wed"` |
-| `exclusions` | yes (may be blank) | Hijri dates and ranges to skip, e.g. `"[1/1-15/1,20/4]"`. Pass `""` for none |
-| `start` | yes | First day of the window, **inclusive** |
-| `end` | yes | Last day of the window, **inclusive** |
-| `dateSystem` | no | How to read *text* `start`/`end`: `"hijri"` (default) or `"gregorian"` |
+| # | Argument | Required | Description |
+|---|---|---|---|
+| 1 | `schedule` | yes | Days with periods, e.g. `"Mon,Tue,Wed"`. Supports double periods and day ranges — see below |
+| 2 | `hijriExclusions` | yes (may be blank) | **Hijri** dates and ranges to skip — your miqaat. Pass `""` for none |
+| 3 | `gregorianExclusions` | yes (may be blank) | **Gregorian** dates and ranges to skip. Pass `""` for none |
+| 4 | `start` | yes | First day of the window, **inclusive** |
+| 5 | `end` | yes | Last day of the window, **inclusive** |
+| 6 | `buffer` | no | Periods to hold back for emergencies — a number (`5`) or a percentage (`"10%"`) |
+| 7 | `dateSystem` | no | How to read *text* `start`/`end`: `"hijri"` (default) or `"gregorian"` |
+
+The two exclusion lists sit side by side so a formula reads left to right: *what days, what to skip, over what window.* Both are positional — if you only use miqaat, pass `""` for the Gregorian list.
+
+### Double periods
+
+If a subject meets twice on a given day, mark it in the schedule. Case, spacing and short forms all work — `THU`, `Thu`, `Thurs` and `thursday` are the same day.
+
+| Written | Meaning |
+|---|---|
+| `Mon` | 1 period every Monday |
+| `Mon+1` | **2** periods every Monday (`+N` adds N extra) |
+| `Mon+2` | 3 periods every Monday |
+| `Mon x2` | 2 periods (`xN` sets the count outright; `*` and `×` also work) |
+| `Mon-Thu` | Mon, Tue, Wed and Thu, 1 period each |
+| `Mon-Wed+1` | Mon, Tue and Wed, 2 periods each |
+| `Thu,Thu` | Summed, so 2 periods |
+
+`"Tue,Wed,Thu+1,Fri,Sat"` means five teaching days, six periods a week.
+
+### Buffer
+
+`buffer` takes periods off the total, for exam days, emergencies or slippage.
+
+| Written | Effect on a count of 155 |
+|---|---|
+| *(blank)* or `0` | `155` |
+| `5` | `150` |
+| `"10%"` | `139` — 10% off, rounded down |
+| a percent-formatted cell (`0.1`) | `139` |
+| `-5` | `160` — a negative buffer adds |
+
+The result never drops below zero. Use `PeriodCountGross()` alongside `PeriodCount()` to show what the buffer costs.
 
 **Returns:** a plain number.
 
@@ -63,12 +103,13 @@ No libraries, no manifest changes, no permissions prompt. The script is self-con
 - **Text** dates (`"1/2/1447"`) are read as **Hijri** `d/m/yyyy` by default.
 - **Real date cells** are always read as **Gregorian** and converted internally.
 - Month names work anywhere a date is accepted: `"1 Moharram 1447"`, `"20 Rabi II 1447"`.
-- If `start` is later than `end`, the two are swapped rather than returning an error.
+- Gregorian entries in the exclusion lists are also **d/m**, not m/d. `25/12` is Christmas, not 12 May.
+- If `start` is later than `end`, you get an error rather than a silent guess. The usual cause is an academic year crossing the Hijri new year — `1/10/1448` to `29/6/1448` should be `29/6/1449`. The error message says so.
 
 Cell references work everywhere, so a timetable can be driven entirely from cells:
 
 ```
-=PeriodCount(B2, $F$1, $B$1, $C$1)
+=PeriodCount(B2, $C$2, $D$2, $A$2, $B$2)
 ```
 
 ---
@@ -96,7 +137,23 @@ Because miqaat fall on fixed Hijri dates but drift through the Gregorian week, a
 
 **Out-of-range entries are ignored, never fatal.** If the window starts in Safar and an exclusion names Moharram, the entry is silently dropped for that year — it does not throw, and it does not shift anything. It will still apply if the window is long enough to reach the *following* Moharram.
 
-**Day counts are clamped.** `30/12` in a non-Kabisa year (where Zilhaj has 29 days) resolves to 29 rather than spilling into Moharram.
+**Dates that do not exist are skipped, not shifted.** A single `30/12` in a non-Kabisa year (Zilhaj has 29 days) simply does not occur that year, so nothing is excluded. Inside a *range*, an out-of-reach endpoint clamps to the last real day of the month rather than spilling into the next.
+
+**Two calendars, two lists.** Argument 2 is read as Hijri, argument 3 as Gregorian. Miqaat go in the Hijri list because they recur on fixed Hijri dates; national holidays, exam boards and term breaks usually go in the Gregorian list because they recur on fixed Gregorian dates.
+
+```
+=PeriodCount("Tue,Wed,Thu", "[1/1-15/1,20/4]", "[25/12,15/8]", "1/10/1448", "29/6/1449")
+```
+
+Gregorian entries take the same forms — `25/12`, `25/12/2027`, `24/12-31/12`, `December`, `1/1/2028-5/1/2028` — and undated ones repeat every Gregorian year the window touches. **They are d/m, not m/d.** A single date that does not exist in a given year (`29/2` outside a leap year) is skipped for that year.
+
+You can also mix both in one cell with a `G:` tag, which applies to the rest of that cell until an `H:` tag switches back:
+
+```
+[1/1-15/1, 20/4, G:25/12, G:1/1, H:Ramadaan]
+```
+
+The `G:` tag is mainly useful when a single cell has to carry both kinds of date. With two separate arguments you rarely need it.
 
 **Range separators.** Use `-` between two dates. Also accepted: `–`, `—`, `..`, `to`, `thru`, `through`, `till`, `until`. Hyphens inside month names (`Rabi al-Awwal`) are protected, so they don't split a range by accident.
 
@@ -108,16 +165,16 @@ All figures below are actual output.
 
 | Formula | Result |
 |---|---|
-| `=PeriodCount("Mon,Tue,Wed","","1/1/1447","29/12/1447")` | `150` |
-| `=PeriodCount("Mon,Tue,Wed","[1/1-15/1,20/4]","1/1/1447","29/12/1447")` | `144` |
-| `=PeriodCount("Mon,Tue,Wed","[1/1-15/1,20/4]","1/2/1447","29/12/1447")` | `138` |
-| `=PeriodCount("Mon,Tue,Wed","[1/1-15/1]","1/1/1446","29/12/1448")` | `437` |
-| `=PeriodCount("Mon,Tue,Wed","[1/1/1447-15/1/1447]","1/1/1446","29/12/1448")` | `450` |
-| `=PeriodCount("Mon,Tue,Wed,Thu","[25/12-5/1]","1/1/1446","29/12/1448")` | `589` |
-| `=PeriodCount("Mon,Wed","Ramadaan","1/1/1447","29/12/1447")` | `91` |
-| `=PeriodCount("Mon,Tue","Rabi al-Awwal","1/1/1447","29/12/1447")` | `91` |
-| `=PeriodCount("Mon,Tue,Wed","1 Moharram - 15 Moharram","1/1/1447","29/12/1447")` | `144` |
-| `=PeriodCount("Mon","","1/1/1447","29/12/1447")` | `50` |
+| `=PeriodCount("Mon,Tue,Wed","","","1/1/1447","29/12/1447")` | `150` |
+| `=PeriodCount("Mon,Tue,Wed","[1/1-15/1,20/4]","","1/1/1447","29/12/1447")` | `144` |
+| `=PeriodCount("Mon,Tue,Wed","[1/1-15/1,20/4]","","1/2/1447","29/12/1447")` | `138` |
+| `=PeriodCount("Mon,Tue,Wed","[1/1-15/1]","","1/1/1446","29/12/1448")` | `437` |
+| `=PeriodCount("Mon,Tue,Wed","[1/1/1447-15/1/1447]","","1/1/1446","29/12/1448")` | `450` |
+| `=PeriodCount("Mon,Tue,Wed,Thu","[25/12-5/1]","","1/1/1446","29/12/1448")` | `589` |
+| `=PeriodCount("Mon,Wed","Ramadaan","","1/1/1447","29/12/1447")` | `91` |
+| `=PeriodCount("Mon,Tue","Rabi al-Awwal","","1/1/1447","29/12/1447")` | `91` |
+| `=PeriodCount("Mon,Tue,Wed","1 Moharram - 15 Moharram","","1/1/1447","29/12/1447")` | `144` |
+| `=PeriodCount("Mon","","","1/1/1447","29/12/1447")` | `50` |
 
 Note rows 4 and 5: identical windows, identical dates, but the undated exclusion repeats across all three years (`437`) while the dated one fires once (`450`).
 
@@ -125,56 +182,133 @@ Note rows 4 and 5: identical windows, identical dates, but the undated exclusion
 
 Put the year's boundaries and the miqaat list in fixed cells, then drag one formula down the subject column.
 
-| | A | B | C |
-|---|---|---|---|
-| **1** | Year start | Year end | Miqaat list |
-| **2** | `1/2/1447` | `29/12/1447` | `[1/1-15/1,20/4,Ramadaan]` |
-| **3** | **Subject** | **Days** | **Periods** |
-| **4** | Physics | `Mon,Tue,Wed` | `=PeriodCount(B4,$C$2,$A$2,$B$2)` |
-| **5** | Chemistry | `Tue,Thu` | `=PeriodCount(B5,$C$2,$A$2,$B$2)` |
-| **6** | Maths | `Mon,Wed,Fri` | `=PeriodCount(B6,$C$2,$A$2,$B$2)` |
+| | A | B | C | D |
+|---|---|---|---|---|
+| **1** | Year start | Year end | Miqaat (Hijri) | Holidays (Gregorian) |
+| **2** | `1/10/1448` | `29/6/1449` | `[1/1-15/1,20/4]` | `[25/12,15/8]` |
+| **3** | **Subject** | **Schedule** | **Periods** | **Usable** |
+| **4** | Physics | `Tue,Wed,Thu+1` | `=PeriodCountGross(B4,$C$2,$D$2,$A$2,$B$2)` | `=PeriodCount(B4,$C$2,$D$2,$A$2,$B$2,"10%")` |
+| **5** | Chemistry | `Tue,Thu` | `=PeriodCountGross(B5,$C$2,$D$2,$A$2,$B$2)` | `=PeriodCount(B5,$C$2,$D$2,$A$2,$B$2,"10%")` |
+| **6** | Maths | `Mon-Wed` | `=PeriodCountGross(B6,$C$2,$D$2,$A$2,$B$2)` | `=PeriodCount(B6,$C$2,$D$2,$A$2,$B$2,"10%")` |
 
-Because `$C$2` is shared, adding a miqaat to that one cell re-costs every subject in the sheet at once. And because undated entries repeat annually, the same sheet keeps working when you roll the year start and end forward — no need to restate the recurring miqaat.
+Column C is what the calendar gives you; column D is what you'd actually plan against, holding 10% back. Physics has a double period on Thursday, so it earns four periods a week from three teaching days.
+
+Because `$C$2` and `$D$2` are shared, adding one miqaat re-costs every subject at once. And because undated entries repeat annually, the same sheet keeps working when you roll the year forward.
 
 Two things this makes easy:
 
 - **Syllabus planning** — compare periods available against periods required per subject, before the year starts.
-- **Miqaat impact** — duplicate the miqaat cell, delete one entry, and the difference in the totals is exactly what that occasion costs each subject.
+- **Miqaat impact** — delete one entry from the miqaat cell and the change in the totals is exactly what that occasion costs each subject.
+
+> **Watch the end year.** An academic year that starts in Shawwal ends in the *next* Hijri year. `1/10/1448` to `29/6/1448` is backwards; you want `1/10/1448` to `29/6/1449`. The function raises an error rather than guessing, and tells you which year to use.
 
 ---
 
 ## Helper functions
 
-### `PeriodDates(days, exclusions, start, end, [dateSystem])`
+The script installs six functions in total. `PeriodCount` is the one you'll use most; the rest exist to check it, break it down, or convert dates on their own.
 
-Same arguments as `PeriodCount`, but spills a table of every day counted — Hijri date, month name, weekday, and Gregorian date. The fastest way to check a formula before trusting the number.
+| Function | Returns | Use it for |
+|---|---|---|
+| `PeriodCount` | number | The headline figure — periods after exclusions and buffer |
+| `PeriodCountGross` | number | The same count *before* the buffer |
+| `PeriodDayCount` | number | Teaching **days**, ignoring double periods |
+| `PeriodDates` | table | Every day counted, for checking your setup |
+| `HijriToGregorian` | date | Convert a single Hijri date |
+| `GregorianToHijri` | text | Convert a single Gregorian date |
+
+The first four share the same argument list, so a formula can be copied between them by changing only the name.
+
+---
+
+### `PeriodCountGross(schedule, hijriExclusions, gregorianExclusions, start, end, [dateSystem])`
+
+Identical to `PeriodCount` but with no `buffer` argument — it always returns the full count. Put it in the column beside `PeriodCount` so the difference between the two shows what the buffer is holding back.
 
 ```
-=PeriodDates("Mon","Ramadaan","1/1/1447","29/1/1447")
+=PeriodCountGross("Tue,Wed,Thu+1,Fri,Sat", miqaat, "", "1/10/1448", "29/6/1449")   → 186
+=PeriodCount(     "Tue,Wed,Thu+1,Fri,Sat", miqaat, "", "1/10/1448", "29/6/1449", "10%")   → 167
 ```
 
-| Hijri | Month | Weekday | Gregorian |
-|---|---|---|---|
-| 5/1/1447 | Moharram | Mon | 30/06/2025 |
-| 12/1/1447 | Moharram | Mon | 07/07/2025 |
-| … | | | |
+---
+
+### `PeriodDayCount(schedule, hijriExclusions, gregorianExclusions, start, end, [dateSystem])`
+
+Counts the **days** a subject meets rather than the periods it gets. Double periods are ignored, so each qualifying day counts once.
+
+```
+=PeriodDayCount("Tue,Wed,Thu+1,Fri,Sat", miqaat, "", "1/10/1448", "29/6/1449")   → 155
+=PeriodCount(   "Tue,Wed,Thu+1,Fri,Sat", miqaat, "", "1/10/1448", "29/6/1449")   → 186
+```
+
+155 days in the classroom, 186 periods taught, because Thursday is a double. Useful for attendance registers, room bookings, or anything counted per visit rather than per period.
+
+---
+
+### `PeriodDates(schedule, hijriExclusions, gregorianExclusions, start, end, [dateSystem])`
+
+Spills a table of every day counted. **This is the function to reach for whenever a number looks wrong** — it shows exactly which days were included, so a missing miqaat or a mis-typed weekday is visible at a glance.
+
+```
+=PeriodDates("Tue,Thu+1", "Ramadaan", "", "1/10/1448", "20/10/1448")
+```
+
+| Hijri | Month | Weekday | Gregorian | Periods |
+|---|---|---|---|---|
+| 2/10/1448 | Shawwal | Tue | 09/03/2027 | 1 |
+| 4/10/1448 | Shawwal | Thu | 11/03/2027 | 2 |
+| 9/10/1448 | Shawwal | Tue | 16/03/2027 | 1 |
+| 11/10/1448 | Shawwal | Thu | 18/03/2027 | 2 |
+| 16/10/1448 | Shawwal | Tue | 23/03/2027 | 1 |
+| 18/10/1448 | Shawwal | Thu | 25/03/2027 | 2 |
+
+Notes:
+
+- The `Periods` column reflects double periods, so it sums to the `PeriodCount` total. The row count equals `PeriodDayCount`.
+- The `Gregorian` column contains real date values — format the column as a date if it shows as a serial number.
+- Excluded days are simply absent; the table lists what counted, not what was skipped.
+- `buffer` is not an argument here, since a buffer is a deduction from a total rather than a specific day.
+- If nothing matches, it returns a single cell reading `No periods found`.
+- Needs empty cells below and to the right to spill into, or Sheets shows `#REF!`.
+
+Because it spills, keep it on a scratch sheet rather than inside your main timetable grid.
+
+---
 
 ### `HijriToGregorian(hijri)`
 
-```
-=HijriToGregorian("1/1/1447")       → 26 June 2025
-=HijriToGregorian("1 Moharram 1447") → 26 June 2025
-```
+Converts one Hijri date to a real Gregorian date value.
 
-Returns a real date value; format the cell as a date.
+| Formula | Result |
+|---|---|
+| `=HijriToGregorian("1/1/1447")` | 26 June 2025 |
+| `=HijriToGregorian("1 Moharram 1447")` | 26 June 2025 |
+| `=HijriToGregorian("1/10/1448")` | 8 March 2027 |
+| `=HijriToGregorian("29/6/1449")` | 28 November 2027 |
+| `=HijriToGregorian("1 Ramadaan 1448")` | 6 February 2027 |
+
+- Accepts `d/m/yyyy` or `d MonthName yyyy`, with the same month names and short forms as everywhere else.
+- The **year is required** — `"1/1"` has no single answer and raises an error.
+- Returns a genuine date value, not text, so it sorts correctly and works inside `TEXT()`, `WEEKDAY()` and date arithmetic. Format the cell as a date if it appears as a number.
+
+Handy for printing a term calendar: put Hijri dates in one column and this formula beside them.
+
+---
 
 ### `GregorianToHijri(gregorian)`
 
-```
-=GregorianToHijri(DATE(2025,6,26))  → "1 Moharram 1447"
-```
+The reverse. Takes a real date cell and returns the Hijri date as text.
 
-Takes a real date cell and returns a Hijri date string.
+| Formula | Result |
+|---|---|
+| `=GregorianToHijri(DATE(2025,6,26))` | `1 Moharram 1447` |
+| `=GregorianToHijri(DATE(2026,1,1))` | `13 Rajab 1447` |
+| `=GregorianToHijri(DATE(2027,3,8))` | `1 Shawwal 1448` |
+| `=GregorianToHijri(TODAY())` | today's Hijri date |
+
+- The input must be a **real date value** — a date cell, `DATE()`, or `TODAY()`. Text like `"26/6/2025"` raises an error, because there is no reliable way to tell `3/4` apart as March 4th or April 3rd.
+- Returns text in `d MonthName yyyy` form using the short month names. To get the parts separately, wrap in `SPLIT()`.
+- Both converters honour `HIJRI_DAY_ADJUSTMENT`, so they always agree with whatever `PeriodCount` is counting.
 
 ---
 
@@ -266,6 +400,12 @@ Errors surface as `#ERROR!` with the message in the cell tooltip.
 | `could not read "…" in Exclusions.` | Unparseable exclusion entry |
 | `too many dashes in "…"` | More than one range per comma-separated entry |
 | `window is N days; max is 40000.` | Window exceeds `MAX_WINDOW_DAYS` |
+| `Start (1 Shawwal 1448) is after End (29 Jumada II 1448)…` | End is before start. If the year crosses the Hijri new year, increment the end year |
+| `"1/1/1448" has year 1448, which is not a Gregorian year…` | A Hijri date landed in the Gregorian list, or vice versa. The message says which list to move it to |
+| `buffer "abc" is not a number or percentage.` | Buffer must be a number, a `"10%"` string, or blank |
+| `End is empty. The argument order is…` | A formula written for an earlier version. Insert `""` for the Gregorian list before the start date |
+| `"Monx" is not a weekday.` | Unreadable schedule token — check the `+N` / `xN` form |
+| `could not read "…" in Days.` | Stray text in the schedule that isn't a day or a period count |
 
 A syntactically valid exclusion that falls outside the window is **not** an error — it is ignored.
 
@@ -277,6 +417,8 @@ The logic was validated against an independent brute-force count built directly 
 
 - 15 targeted cases — full years, mid-year starts, multi-year windows, wrap-around ranges, whole-month names, dated vs undated exclusions, Gregorian input, reversed arguments, blank exclusions.
 - 400 randomised configurations across Hijri years 1440–1460 with random windows and exclusion sets — **0 mismatches**.
+- A further 300 randomised cases with random double-period weights on random weekdays — **0 mismatches**.
+- Every double-period spelling checked against a single canonical result: `THU+1`, `thu+1`, `Thurs+1`, `THURSDAY+1`, `Thu + 1`, `thu*2`, `THU X2`, `Thu2`, `Thu×2` and `  Thu  +  1  ` all agree.
 - Round-trip check of `toAJD` ⇄ `fromAJD` over 21,616 consecutive dates (1400–1460 AH), which is what surfaced the day-zero boundary bug.
 - Year lengths cross-checked against the Kabisa table for the same span — 0 mismatches.
 
