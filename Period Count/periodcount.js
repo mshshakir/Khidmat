@@ -215,6 +215,14 @@ var DAY_ALIASES_ = {
   sat: 6, saturday: 6, sabt: 6, alsabt: 6
 };
 
+/** Gregorian month names for the Gregorian exclusion list. */
+var GREGORIAN_MONTHS_ = [
+  ["jan", "january"], ["feb", "february"], ["mar", "march"], ["apr", "april"],
+  ["may"], ["jun", "june"], ["jul", "july"], ["aug", "august"],
+  ["sep", "sept", "september"], ["oct", "october"], ["nov", "november"],
+  ["dec", "december"]
+];
+
 /** Month aliases, already normalised (lowercase, letters/digits only). */
 var MONTH_ALIASES_ = [
   ["moharram", "moharam", "muharram", "muharam", "moharramalharaam", "moh", "muh"],
@@ -242,44 +250,80 @@ var MONTH_ALIASES_ = [
 /**
  * Counts how many periods fall between two Hijri dates.
  *
- * @param {"Mon,Tue,Wed"} days Weekdays the subject has periods on.
- * @param {"[1/1-15/1,20/4]"} exclusions Hijri dates/ranges to skip (blank for none).
- * @param {"1/2/1447"} start First day of the window, inclusive.
- * @param {"29/12/1447"} end Last day of the window, inclusive.
+ * @param {"Tue,Wed,Thu+1,Fri,Sat"} schedule Days with periods. Add "+1" for a double period, "x2" for an explicit count, or a range like "Mon-Thu".
+ * @param {"[1/1-15/1,20/4]"} hijriExclusions Hijri dates/ranges to skip, e.g. miqaat. Blank for none.
+ * @param {"[25/12,15/8]"} gregorianExclusions Gregorian dates/ranges to skip, written d/m or d/m/yyyy. Blank for none.
+ * @param {"1/10/1448"} start First day of the window, inclusive.
+ * @param {"29/6/1449"} end Last day of the window, inclusive.
+ * @param {5} buffer Optional. Periods to hold back, as a number (5) or a percentage ("10%").
  * @param {"hijri"} dateSystem Optional. How to read TEXT start/end: "hijri" (default) or "gregorian".
  * @return {number} The number of periods.
  * @customfunction
  */
-function PeriodCount(days, exclusions, start, end, dateSystem) {
-  var result = periodScan_(days, exclusions, start, end, dateSystem);
-  return result.count;
+function PeriodCount(schedule, hijriExclusions, gregorianExclusions, start, end, buffer, dateSystem) {
+  var result = periodScan_(schedule, hijriExclusions, gregorianExclusions, start, end, dateSystem);
+  return applyBuffer_(result.count, buffer);
 }
 
 /**
- * Same as PeriodCount but lists every counted day, for checking your setup.
+ * Counts periods before any buffer is taken off. Useful next to PeriodCount
+ * to show what the buffer costs.
  *
- * @param {"Mon,Tue,Wed"} days Weekdays the subject has periods on.
- * @param {"[1/1-15/1,20/4]"} exclusions Hijri dates/ranges to skip (blank for none).
- * @param {"1/2/1447"} start First day of the window, inclusive.
- * @param {"29/12/1447"} end Last day of the window, inclusive.
- * @param {"hijri"} dateSystem Optional. How to read TEXT start/end: "hijri" (default) or "gregorian".
- * @return {Array} Hijri date, weekday and Gregorian date for each period counted.
+ * @param {"Tue,Wed,Thu+1"} schedule Days with periods.
+ * @param {"[1/1-15/1]"} hijriExclusions Hijri dates/ranges to skip (blank for none).
+ * @param {"[25/12]"} gregorianExclusions Gregorian dates/ranges to skip (blank for none).
+ * @param {"1/10/1448"} start First day of the window, inclusive.
+ * @param {"29/6/1449"} end Last day of the window, inclusive.
+ * @param {"hijri"} dateSystem Optional. "hijri" (default) or "gregorian".
+ * @return {number} Periods before the buffer.
  * @customfunction
  */
-function PeriodDates(days, exclusions, start, end, dateSystem) {
-  var result = periodScan_(days, exclusions, start, end, dateSystem);
+function PeriodCountGross(schedule, hijriExclusions, gregorianExclusions, start, end, dateSystem) {
+  return periodScan_(schedule, hijriExclusions, gregorianExclusions, start, end, dateSystem).count;
+}
+
+/**
+ * Counts teaching DAYS rather than periods, ignoring double periods.
+ *
+ * @param {"Tue,Wed,Thu+1"} schedule Days with periods.
+ * @param {"[1/1-15/1]"} hijriExclusions Hijri dates/ranges to skip (blank for none).
+ * @param {"[25/12]"} gregorianExclusions Gregorian dates/ranges to skip (blank for none).
+ * @param {"1/10/1448"} start First day of the window, inclusive.
+ * @param {"29/6/1449"} end Last day of the window, inclusive.
+ * @param {"hijri"} dateSystem Optional. "hijri" (default) or "gregorian".
+ * @return {number} Number of days on which the subject meets.
+ * @customfunction
+ */
+function PeriodDayCount(schedule, hijriExclusions, gregorianExclusions, start, end, dateSystem) {
+  return periodScan_(schedule, hijriExclusions, gregorianExclusions, start, end, dateSystem).days;
+}
+
+/**
+ * Lists every day counted, for checking your setup.
+ *
+ * @param {"Tue,Wed,Thu+1"} schedule Days with periods.
+ * @param {"[1/1-15/1]"} hijriExclusions Hijri dates/ranges to skip (blank for none).
+ * @param {"[25/12]"} gregorianExclusions Gregorian dates/ranges to skip (blank for none).
+ * @param {"1/10/1448"} start First day of the window, inclusive.
+ * @param {"29/6/1449"} end Last day of the window, inclusive.
+ * @param {"hijri"} dateSystem Optional. "hijri" (default) or "gregorian".
+ * @return {Array} Hijri date, month, weekday, Gregorian date and periods for each day counted.
+ * @customfunction
+ */
+function PeriodDates(schedule, hijriExclusions, gregorianExclusions, start, end, dateSystem) {
+  var result = periodScan_(schedule, hijriExclusions, gregorianExclusions, start, end, dateSystem);
   if (!result.dates.length) return [["No periods found"]];
 
-  var rows = [["Hijri", "Month", "Weekday", "Gregorian"]];
+  var rows = [["Hijri", "Month", "Weekday", "Gregorian", "Periods"]];
   for (var i = 0; i < result.dates.length; i++) {
-    var ajd = result.dates[i],
-        h   = ajdToHijri_(ajd),
-        g   = HijriDate.ajdToGregorian(ajd);
+    var ajd = result.dates[i].ajd,
+        h   = ajdToHijri_(ajd);
     rows.push([
       h.getDate() + "/" + (h.getMonth() + 1) + "/" + h.getYear(),
       HijriDate.getShortMonthName(h.getMonth()),
       ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"][weekdayOfAJD_(ajd)],
-      g
+      HijriDate.ajdToGregorian(ajd),
+      result.dates[i].weight
     ]);
   }
   return rows;
@@ -293,7 +337,7 @@ function PeriodDates(days, exclusions, start, end, dateSystem) {
  * @customfunction
  */
 function HijriToGregorian(hijri) {
-  var p = parseDatePart_(String(firstValue_(hijri)), null);
+  var p = parseHijriPart_(String(firstValue_(hijri)));
   if (p.year === null) throw new Error("HijriToGregorian: include a year, e.g. 1/1/1447");
   return HijriDate.ajdToGregorian(hijriToAJD_(p.year, p.month, p.day));
 }
@@ -308,8 +352,7 @@ function HijriToGregorian(hijri) {
 function GregorianToHijri(gregorian) {
   var v = firstValue_(gregorian);
   if (!(v instanceof Date)) throw new Error("GregorianToHijri: needs a real date cell.");
-  var h = ajdToHijri_(HijriDate.gregorianToAJD(v));
-  return h.getDate() + " " + HijriDate.getShortMonthName(h.getMonth()) + " " + h.getYear();
+  return formatHijri_(ajdToHijri_(HijriDate.gregorianToAJD(v)));
 }
 
 
@@ -317,12 +360,20 @@ function GregorianToHijri(gregorian) {
  * 5. CORE ENGINE
  * ========================================================================== */
 
-function periodScan_(days, exclusions, start, end, dateSystem) {
+function periodScan_(schedule, hijriExclusions, gregExclusions, start, end, dateSystem) {
+  // Argument order changed: the two exclusion lists now sit together, before
+  // start and end. An older four-argument formula lands here with End empty.
+  if (isBlank_(end) && !isBlank_(start)) {
+    throw new Error('PeriodCount: End is empty. The argument order is ' +
+      '(schedule, hijriExclusions, gregorianExclusions, start, end, [buffer], [dateSystem]). ' +
+      'If this formula was written for an earlier version, insert "" for the Gregorian list ' +
+      'before the start date.');
+  }
+
   var system = String(firstValue_(dateSystem) || DEFAULT_DATE_SYSTEM)
                  .toLowerCase().indexOf("greg") === 0 ? "gregorian" : "hijri";
 
-  var wanted = parseDays_(days);
-  if (!wanted.length) throw new Error('PeriodCount: no weekdays given, e.g. "Mon,Tue,Wed".');
+  var weights = parseSchedule_(schedule);
 
   var startAJD = resolveEndpoint_(start, system, "Start"),
       endAJD   = resolveEndpoint_(end,   system, "End");
@@ -344,19 +395,19 @@ function periodScan_(days, exclusions, start, end, dateSystem) {
     throw new Error("PeriodCount: window is " + span + " days; max is " + MAX_WINDOW_DAYS + ".");
   }
 
-  var blocks = buildExclusions_(exclusions, startAJD, endAJD);
+  var blocks = buildExclusions_(hijriExclusions, startAJD, endAJD, "hijri")
+        .concat(buildExclusions_(gregExclusions, startAJD, endAJD, "gregorian"));
 
-  var wantedSet = {};
-  for (var w = 0; w < wanted.length; w++) wantedSet[wanted[w]] = true;
-
-  var hits = [];
+  var hits = [], total = 0;
   for (var ajd = startAJD; ajd <= endAJD; ajd += 1) {
-    if (!wantedSet[weekdayOfAJD_(ajd)]) continue;
+    var w = weights[weekdayOfAJD_(ajd)];
+    if (!w) continue;
     if (isBlocked_(ajd, blocks)) continue;
-    hits.push(ajd);
+    hits.push({ ajd: ajd, weight: w });
+    total += w;
   }
 
-  return { count: hits.length, dates: hits };
+  return { count: total, days: hits.length, dates: hits };
 }
 
 /** Weekday of an AJD. 0 = Sunday, same convention as hijri_calendar.js. */
@@ -374,7 +425,7 @@ function ajdToHijri_(ajd) {
   return HijriDate.fromAJD(ajd - HIJRI_DAY_ADJUSTMENT);
 }
 
-/** "1 Shawwal 1448" — used in error messages. */
+/** "1 Shawwal 1448" - used in error messages. */
 function formatHijri_(h) {
   return h.getDate() + " " + HijriDate.getShortMonthName(h.getMonth()) + " " + h.getYear();
 }
@@ -386,10 +437,42 @@ function isBlocked_(ajd, blocks) {
   return false;
 }
 
+/**
+ * Takes the buffer off a raw count.
+ * Accepts a plain number of periods, or a percentage such as "10%".
+ * A negative buffer adds periods. The result never drops below zero.
+ */
+function applyBuffer_(count, buffer) {
+  var raw = firstValue_(buffer);
+  if (raw === "" || raw === null || raw === undefined) return count;
+
+  var text = String(raw).trim();
+  if (!text) return count;
+
+  var out;
+  if (/%$/.test(text)) {
+    var pct = Number(text.replace(/%$/, "").trim());
+    if (isNaN(pct)) throw new Error('PeriodCount: buffer "' + text + '" is not a percentage.');
+    out = Math.floor(count * (1 - pct / 100));
+  } else {
+    var n = Number(text);
+    // Sheets may hand a percent-formatted cell over as a fraction, e.g. 0.1
+    if (isNaN(n)) throw new Error('PeriodCount: buffer "' + text + '" is not a number or percentage.');
+    if (typeof raw === "number" && raw > 0 && raw < 1) out = Math.floor(count * (1 - raw));
+    else out = count - n;
+  }
+  return (out < 0) ? 0 : out;
+}
+
 
 /* ==========================================================================
  * 6. PARSING
  * ========================================================================== */
+
+function isBlank_(v) {
+  var x = firstValue_(v);
+  return x === "" || x === null || x === undefined;
+}
 
 function firstValue_(v) {
   while (Array.isArray(v)) {
@@ -399,28 +482,113 @@ function firstValue_(v) {
   return (v === null || v === undefined) ? "" : v;
 }
 
+/** Flattens a cell range into one comma-separated string. */
+function flattenToText_(v) {
+  if (v === null || v === undefined) return "";
+  if (v instanceof Date) return v;
+  if (!Array.isArray(v)) return String(v);
+  var parts = [];
+  (function walk(x) {
+    if (Array.isArray(x)) { for (var i = 0; i < x.length; i++) walk(x[i]); return; }
+    if (x === null || x === undefined) return;
+    var t = String(x).trim();
+    if (t) parts.push(t);
+  })(v);
+  return parts.join(",");
+}
+
 function normalise_(s) {
   return String(s).toLowerCase().replace(/[^a-z0-9]/g, "");
 }
 
-/** "Mon,Tue,Wed" -> [1,2,3] */
-function parseDays_(days) {
-  var raw = firstValue_(days);
-  if (raw instanceof Date) throw new Error("PeriodCount: Days should be text like \"Mon,Tue,Wed\".");
-
-  var parts = String(raw).split(/[,;/|+&\s]+/),
-      out = [], seen = {};
-
-  for (var i = 0; i < parts.length; i++) {
-    var key = normalise_(parts[i]);
-    if (!key) continue;
-    if (!(key in DAY_ALIASES_)) {
-      throw new Error('PeriodCount: "' + parts[i] + '" is not a weekday. Use Mon, Tue, Wed, Thu, Fri, Sat, Sun.');
-    }
-    var d = DAY_ALIASES_[key];
-    if (!seen[d]) { seen[d] = true; out.push(d); }
+/**
+ * Reads the schedule and returns periods-per-weekday, indexed 0 = Sunday.
+ *
+ *   "Mon,Tue,Wed"        -> Mon 1, Tue 1, Wed 1
+ *   "Mon+1,Tue"          -> Mon 2, Tue 1        (+N adds N extra periods)
+ *   "Mon x2, Tue"        -> Mon 2, Tue 1        (xN sets the count outright)
+ *   "Mon-Thu"            -> Mon..Thu, 1 each
+ *   "Mon-Wed+1"          -> Mon..Wed, 2 each
+ *   "Thurs, THU"         -> summed, so Thu 2
+ *
+ * Case, spacing and punctuation are all ignored.
+ */
+function parseSchedule_(schedule) {
+  var raw = firstValue_(schedule);
+  if (raw instanceof Date) {
+    throw new Error('PeriodCount: Days should be text like "Mon,Tue,Wed".');
   }
-  return out;
+
+  // Normalise the multiplier notations to a single form before tokenising.
+  var text = String(raw)
+        .replace(/\u00D7/g, "x")
+        .replace(/([A-Za-z])\s*[x*]\s*(\d+)/gi, "$1*$2")   // "Mon x2" / "Mon * 2"
+        .replace(/([A-Za-z])\s*\+\s*(\d+)/g, "$1+$2")      // "Mon + 1"
+        .replace(/([A-Za-z])\s*(\d+)/g, "$1*$2");          // "Mon 2" / "Mon2"
+
+  var re = /([A-Za-z][A-Za-z'\u2019\-]*)(?:([+*])(\d+))?/g,
+      weights = {}, spans = [], m, found = false;
+
+  while ((m = re.exec(text)) !== null) {
+    spans.push([m.index, m.index + m[0].length]);
+
+    var days = daysFromToken_(m[1]),
+        n    = m[3] ? Number(m[3]) : null,
+        w;
+
+    if (m[2] === "+")      w = 1 + n;
+    else if (m[2] === "*") w = n;
+    else                   w = 1;
+
+    if (w < 0 || w > 50) {
+      throw new Error('PeriodCount: "' + m[0] + '" gives ' + w + ' periods a day, which looks wrong.');
+    }
+
+    for (var i = 0; i < days.length; i++) {
+      weights[days[i]] = (weights[days[i]] || 0) + w;
+      found = true;
+    }
+  }
+
+  // Anything left between the matches must be a separator, not a stray word.
+  var rest = "", pos = 0;
+  for (var k = 0; k < spans.length; k++) {
+    rest += text.slice(pos, spans[k][0]);
+    pos = spans[k][1];
+  }
+  rest += text.slice(pos);
+  if (/[^,;|&\/\s]/.test(rest)) {
+    throw new Error('PeriodCount: could not read "' + rest.trim() + '" in Days.');
+  }
+
+  if (!found) throw new Error('PeriodCount: no weekdays given, e.g. "Mon,Tue,Wed".');
+  return weights;
+}
+
+/** One schedule token -> a list of weekday numbers. Handles "Mon-Thu" ranges. */
+function daysFromToken_(token) {
+  var key = normalise_(token);
+  if (key in DAY_ALIASES_) return [DAY_ALIASES_[key]];
+
+  // day range, e.g. "Mon-Thu" or "Sat-Mon"
+  if (token.indexOf("-") !== -1) {
+    var halves = token.split("-");
+    if (halves.length === 2) {
+      var a = normalise_(halves[0]), b = normalise_(halves[1]);
+      if (a in DAY_ALIASES_ && b in DAY_ALIASES_) {
+        var from = DAY_ALIASES_[a], to = DAY_ALIASES_[b], out = [], d = from;
+        for (var guard = 0; guard < 7; guard++) {
+          out.push(d);
+          if (d === to) break;
+          d = (d + 1) % 7;
+        }
+        return out;
+      }
+    }
+  }
+
+  throw new Error('PeriodCount: "' + token + '" is not a weekday. ' +
+                  'Use Mon, Tue, Wed, Thu, Fri, Sat, Sun.');
 }
 
 /** Start/End -> real AJD. */
@@ -438,7 +606,7 @@ function resolveEndpoint_(value, system, label) {
     return HijriDate.gregorianToAJD(g);
   }
 
-  var p = parseDatePart_(text, null);
+  var p = parseHijriPart_(text);
   if (p.year === null) {
     throw new Error("PeriodCount: " + label + ' "' + text + '" needs a year, e.g. 1/2/1447.');
   }
@@ -457,70 +625,84 @@ function parseGregorianText_(text) {
  *   "20/4"   "20/4/1447"   "20 Rabi II"   "20 Rabi al-Aakhar 1447"   "Ramadaan"
  * Returns {day, month, year, wholeMonth}. day/year may be null.
  */
-function parseDatePart_(text, contextYear) {
+function parseHijriPart_(text) {
+  return parseDatePart_(text, monthFromName_, 1, 1000, 1700, "Hijri");
+}
+
+/** Same, for Gregorian entries: "25/12", "25/12/2027", "December". */
+function parseGregorianPart_(text) {
+  return parseDatePart_(text, gregorianMonthFromName_, 4, 1900, 2200, "Gregorian");
+}
+
+function parseDatePart_(text, monthLookup, yearDigits, minYear, maxYear, calName) {
   var s = String(text).trim();
   if (!s) throw new Error("PeriodCount: empty date in Exclusions.");
 
+  var yearPattern = (yearDigits === 4) ? "\\d{4}" : "\\d{1,4}";
+
   // numeric: d/m or d/m/yyyy
-  var m = s.match(/^(\d{1,2})\s*\/\s*(\d{1,2})(?:\s*\/\s*(\d{1,4}))?$/);
+  var m = s.match(new RegExp("^(\\d{1,2})\\s*\\/\\s*(\\d{1,2})(?:\\s*\\/\\s*(" + yearPattern + "))?$"));
   if (m) {
-    return makePart_(Number(m[1]), Number(m[2]) - 1,
-                     m[3] ? Number(m[3]) : contextYear, false, s);
+    return makePart_(Number(m[1]), Number(m[2]) - 1, m[3] ? Number(m[3]) : null, false, s, minYear, maxYear, calName);
   }
 
   // month name only -> the whole month
-  var monthOnly = monthFromName_(s);
-  if (monthOnly !== -1) {
-    return makePart_(null, monthOnly, contextYear, true, s);
-  }
+  var monthOnly = monthLookup(s);
+  if (monthOnly !== -1) return makePart_(null, monthOnly, null, true, s, minYear, maxYear, calName);
 
   // "d MonthName [yyyy]"  /  "MonthName d[, yyyy]"
-  var named = s.match(/^(\d{1,2})\s+(.+?)(?:\s+(\d{3,4}))?$/) ||
-              s.match(/^(.+?)\s+(\d{1,2})(?:\s*,?\s*(\d{3,4}))?$/);
+  var named = s.match(new RegExp("^(\\d{1,2})\\s+(.+?)(?:\\s+(" + yearPattern + "))?$")) ||
+              s.match(new RegExp("^(.+?)\\s+(\\d{1,2})(?:\\s*,?\\s*(" + yearPattern + "))?$"));
   if (named) {
-    var a = named[1], b = named[2], yr = named[3] ? Number(named[3]) : contextYear;
-    var day, monthIdx;
-    if (/^\d+$/.test(a)) { day = Number(a); monthIdx = monthFromName_(b); }
-    else                 { day = Number(b); monthIdx = monthFromName_(a); }
-    if (monthIdx !== -1) return makePart_(day, monthIdx, yr, false, s);
+    var a = named[1], b = named[2], yr = named[3] ? Number(named[3]) : null, day, monthIdx;
+    if (/^\d+$/.test(a)) { day = Number(a); monthIdx = monthLookup(b); }
+    else                 { day = Number(b); monthIdx = monthLookup(a); }
+    if (monthIdx !== -1) return makePart_(day, monthIdx, yr, false, s, minYear, maxYear, calName);
   }
 
-  // trailing year on a month name: "Ramadaan 1447"
-  var mn = s.match(/^(.+?)\s+(\d{3,4})$/);
+  // trailing year on a month name: "Ramadaan 1447", "December 2027"
+  var mn = s.match(new RegExp("^(.+?)\\s+(" + yearPattern + ")$"));
   if (mn) {
-    var idx = monthFromName_(mn[1]);
-    if (idx !== -1) return makePart_(null, idx, Number(mn[2]), true, s);
+    var idx = monthLookup(mn[1]);
+    if (idx !== -1) return makePart_(null, idx, Number(mn[2]), true, s, minYear, maxYear, calName);
   }
 
   throw new Error('PeriodCount: could not read "' + s + '" in Exclusions. Use d/m, d/m/yyyy, ' +
                   '"20 Rabi II", or a month name like "Ramadaan".');
 }
 
-function makePart_(day, month, year, wholeMonth, original) {
+function makePart_(day, month, year, wholeMonth, original, minYear, maxYear, calName) {
   if (month < 0 || month > 11 || isNaN(month)) {
     throw new Error('PeriodCount: month out of range in "' + original + '". Use 1-12.');
   }
-  if (day !== null && (isNaN(day) || day < 1 || day > 30)) {
-    throw new Error('PeriodCount: day out of range in "' + original + '". Use 1-30.');
+  if (day !== null && (isNaN(day) || day < 1 || day > 31)) {
+    throw new Error('PeriodCount: day out of range in "' + original + '". Use 1-31.');
   }
-  return { day: day, month: month, year: (year === undefined ? null : year), wholeMonth: !!wholeMonth };
+  if (year !== null && (year < minYear || year > maxYear)) {
+    var swap = (calName === "Gregorian")
+      ? ' Did you mean to put it in the Hijri list?'
+      : ' Did you mean to put it in the Gregorian list?';
+    throw new Error('PeriodCount: "' + original + '" has year ' + year +
+                    ', which is not a ' + calName + ' year (expected ' +
+                    minYear + '-' + maxYear + ').' + swap);
+  }
+  return { day: day, month: month, year: year, wholeMonth: !!wholeMonth };
 }
 
-function monthFromName_(text) {
+function lookupMonth_(text, table) {
   var key = normalise_(text);
   if (!key) return -1;
 
-  for (var i = 0; i < MONTH_ALIASES_.length; i++) {
-    for (var j = 0; j < MONTH_ALIASES_[i].length; j++) {
-      if (MONTH_ALIASES_[i][j] === key) return i;
+  for (var i = 0; i < table.length; i++) {
+    for (var j = 0; j < table[i].length; j++) {
+      if (table[i][j] === key) return i;
     }
   }
-  // unique prefix match, e.g. "rama" -> Ramadaan
   if (key.length >= 3) {
     var found = -1;
-    for (var a = 0; a < MONTH_ALIASES_.length; a++) {
-      for (var b = 0; b < MONTH_ALIASES_[a].length; b++) {
-        if (MONTH_ALIASES_[a][b].indexOf(key) === 0) {
+    for (var a = 0; a < table.length; a++) {
+      for (var b = 0; b < table[a].length; b++) {
+        if (table[a][b].indexOf(key) === 0) {
           if (found !== -1 && found !== a) return -1;
           found = a;
         }
@@ -531,43 +713,76 @@ function monthFromName_(text) {
   return -1;
 }
 
+function monthFromName_(text)          { return lookupMonth_(text, MONTH_ALIASES_); }
+function gregorianMonthFromName_(text) { return lookupMonth_(text, GREGORIAN_MONTHS_); }
+
 
 /* ==========================================================================
  * 7. EXCLUSIONS
  * ========================================================================== */
 
+/** The two calendars share one exclusion engine through these adapters. */
+var HIJRI_CAL_ = {
+  name: "Hijri",
+  parse: parseHijriPart_,
+  daysInMonth: function (y, m) { return HijriDate.daysInMonth(y, m); },
+  toAJD: function (y, m, d) { return hijriToAJD_(y, m, d); },
+  yearOf: function (ajd) { return ajdToHijri_(ajd).getYear(); }
+};
+
+var GREGORIAN_CAL_ = {
+  name: "Gregorian",
+  parse: parseGregorianPart_,
+  daysInMonth: function (y, m) { return new Date(y, m + 1, 0).getDate(); },
+  toAJD: function (y, m, d) { return HijriDate.gregorianToAJD(new Date(y, m, d)); },
+  yearOf: function (ajd) { return HijriDate.ajdToGregorian(ajd).getFullYear(); }
+};
+
 /**
- * Turns "[1/1-15/1,20/4]" into a list of [startAJD, endAJD] blocks.
- * Entries without a year repeat in every Hijri year the window touches.
- * Entries that fall outside the window are simply dropped.
+ * Turns an exclusion list into [startAJD, endAJD] blocks.
+ *
+ * Entries without a year repeat in every year the window touches.
+ * Entries outside the window are dropped, never fatal.
+ * A "G:" tag switches to Gregorian for the rest of that cell, "H:" back to Hijri.
  */
-function buildExclusions_(exclusions, startAJD, endAJD) {
+function buildExclusions_(exclusions, startAJD, endAJD, defaultMode) {
   var raw = firstValue_(exclusions);
   if (raw instanceof Date) {
     var one = HijriDate.gregorianToAJD(raw);
     return [[one, one]];
   }
 
-  var text = String(raw).trim();
+  var text = flattenToText_(exclusions);
+  if (text instanceof Date) {
+    var d = HijriDate.gregorianToAJD(text);
+    return [[d, d]];
+  }
+  text = String(text).trim();
   if (!text) return [];
 
-  // strip wrapping brackets/quotes
   text = text.replace(/^[\s\[\({'"]+/, "").replace(/[\s\]\)}'"]+$/, "").trim();
   if (!text || text === "-") return [];
 
   // protect hyphens inside month names ("Rabi al-Awwal") before splitting ranges
   text = text.replace(/([a-zA-Z])\s*-\s*([a-zA-Z])/g, "$1 $2");
-  // normalise range separators to a single dash
-  text = text.replace(/\s*(?:–|—|\.\.|\bto\b|\bthru\b|\bthrough\b|\btill\b|\buntil\b)\s*/gi, "-");
+  text = text.replace(/\s*(?:\u2013|\u2014|\.\.|\bto\b|\bthru\b|\bthrough\b|\btill\b|\buntil\b)\s*/gi, "-");
 
-  var firstYear = ajdToHijri_(startAJD).getYear(),
-      lastYear  = ajdToHijri_(endAJD).getYear(),
-      blocks    = [],
-      tokens    = text.split(/[,;\n]+/);
+  var mode   = (defaultMode === "gregorian") ? GREGORIAN_CAL_ : HIJRI_CAL_,
+      blocks = [],
+      tokens = text.split(/[,;\n]+/);
 
   for (var t = 0; t < tokens.length; t++) {
     var token = tokens[t].trim();
     if (!token) continue;
+
+    // inline calendar tag, e.g. "G: 25/12/2027"
+    var tag = token.match(/^([a-zA-Z]+)\s*:\s*(.*)$/);
+    if (tag) {
+      var word = tag[1].toLowerCase();
+      if (word === "g" || word === "greg" || word === "gregorian") { mode = GREGORIAN_CAL_; token = tag[2].trim(); }
+      else if (word === "h" || word === "hijri" || word === "misri") { mode = HIJRI_CAL_; token = tag[2].trim(); }
+      if (!token) continue;
+    }
 
     var halves = token.split("-"),
         left   = halves[0].trim(),
@@ -577,64 +792,57 @@ function buildExclusions_(exclusions, startAJD, endAJD) {
       throw new Error('PeriodCount: too many dashes in "' + token + '". Use one range per entry.');
     }
 
-    var lp = parseDatePart_(left, null),
-        rp = right ? parseDatePart_(right, null) : null;
+    var lp = mode.parse(left),
+        rp = right ? mode.parse(right) : null;
 
-    var anchored = (lp.year !== null) || (rp && rp.year !== null);
+    var anchored = (lp.year !== null) || (rp && rp.year !== null),
+        years;
 
-    // A dated entry happens once; an undated one repeats every year in range.
-    var years = anchored
-      ? [lp.year !== null ? lp.year : rp.year]
-      : yearSpan_(firstYear - 1, lastYear + 1);
+    if (anchored) {
+      years = [lp.year !== null ? lp.year : rp.year];
+    } else {
+      var first = mode.yearOf(startAJD), last = mode.yearOf(endAJD);
+      years = [];
+      for (var y = first - 1; y <= last + 1; y++) years.push(y);
+    }
 
-    for (var y = 0; y < years.length; y++) {
-      var block = makeBlock_(lp, rp, years[y]);
+    for (var i = 0; i < years.length; i++) {
+      var block = makeBlock_(lp, rp, years[i], mode);
       if (block && block[1] >= startAJD && block[0] <= endAJD) blocks.push(block);
     }
   }
   return blocks;
 }
 
-function yearSpan_(from, to) {
-  var out = [];
-  for (var y = from; y <= to; y++) out.push(y);
-  return out;
-}
+/** Builds one [startAJD, endAJD] block for a given year. */
+function makeBlock_(lp, rp, year, cal) {
+  var startYear = (lp.year !== null) ? lp.year : year,
+      startMax  = cal.daysInMonth(startYear, lp.month);
 
-/** Builds one [startAJD, endAJD] block for a given Hijri year. */
-function makeBlock_(lp, rp, year) {
-  var startYear = (lp.year !== null) ? lp.year : year;
+  // A single date that does not exist this year (30 Zilhaj in a short year,
+  // 29 February in a common year) simply does not happen. Skip it.
+  if (!rp && !lp.wholeMonth && lp.day !== null && lp.day > startMax) return null;
 
-  var fromDay = (lp.day === null) ? 1 : clampDay_(lp.day, startYear, lp.month);
-  var fromAJD = hijriToAJD_(startYear, lp.month, fromDay);
+  var fromDay = (lp.day === null) ? 1 : Math.min(lp.day, startMax),
+      fromAJD = cal.toAJD(startYear, lp.month, fromDay),
+      toAJD;
 
-  var toAJD;
   if (!rp) {
-    // single date, or a whole month
-    var lastDay = lp.wholeMonth
-      ? HijriDate.daysInMonth(startYear, lp.month)
-      : fromDay;
-    toAJD = hijriToAJD_(startYear, lp.month, lastDay);
+    var lastDay = lp.wholeMonth ? startMax : fromDay;
+    toAJD = cal.toAJD(startYear, lp.month, lastDay);
   } else {
     var endYear = (rp.year !== null) ? rp.year : startYear;
-    // range that wraps past Zilhaj, e.g. 25/12 - 5/1
+    // range that wraps past the end of the year, e.g. 25/12 - 5/1
     if (rp.year === null &&
-        (rp.month < lp.month || (rp.month === lp.month && rp.day !== null &&
-         lp.day !== null && rp.day < lp.day))) {
+        (rp.month < lp.month ||
+         (rp.month === lp.month && rp.day !== null && lp.day !== null && rp.day < lp.day))) {
       endYear = startYear + 1;
     }
-    var endDay = (rp.day === null || rp.wholeMonth)
-      ? HijriDate.daysInMonth(endYear, rp.month)
-      : clampDay_(rp.day, endYear, rp.month);
-    toAJD = hijriToAJD_(endYear, rp.month, endDay);
+    var endMax = cal.daysInMonth(endYear, rp.month),
+        endDay = (rp.day === null || rp.wholeMonth) ? endMax : Math.min(rp.day, endMax);
+    toAJD = cal.toAJD(endYear, rp.month, endDay);
   }
 
   if (toAJD < fromAJD) return null;
   return [fromAJD, toAJD];
-}
-
-/** 30 Zilhaj in a non-Kabisa year becomes 29, rather than spilling over. */
-function clampDay_(day, year, month) {
-  var max = HijriDate.daysInMonth(year, month);
-  return (day > max) ? max : day;
 }
